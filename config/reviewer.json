@@ -1,0 +1,7 @@
+{
+  "enabled": true,
+  "mode": "rules",
+  "model": null,
+  "max_per_scan": 10,
+  "timeout_seconds": 15
+}
