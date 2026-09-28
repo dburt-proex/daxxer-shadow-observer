@@ -1,0 +1,26 @@
+name: Bounded shadow checks
+on:
+  push:
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        python: ['3.11', '3.13']
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: ${{ matrix.python }}
+      - run: python -B -W error::ResourceWarning -m unittest discover -s tests -v
+      - run: python -B scripts/shadow.py init
+      - run: python -B scripts/shadow.py scan
+      - run: python -B scripts/shadow.py validate
+      - run: python -B scripts/shadow.py summary
+      - run: git diff --check

@@ -1,0 +1,553 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "DAXXER shadow episode v0.1",
+  "$ref": "#/$defs/episode",
+  "$defs": {
+    "evidence": {
+      "type": "object",
+      "properties": {
+        "evidence_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "source": {
+          "type": "string",
+          "minLength": 1
+        },
+        "artifact": {
+          "type": "string",
+          "minLength": 1
+        },
+        "sha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "captured_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "method": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "evidence_id",
+        "source",
+        "artifact",
+        "sha256",
+        "captured_at",
+        "method"
+      ],
+      "additionalProperties": false
+    },
+    "claim": {
+      "type": "object",
+      "properties": {
+        "classification": {
+          "enum": [
+            "FACT",
+            "CALCULATION",
+            "ESTIMATE",
+            "INTERPRETATION",
+            "HYPOTHESIS",
+            "RECOMMENDATION"
+          ]
+        },
+        "text": {
+          "type": "string",
+          "minLength": 1
+        },
+        "evidence_refs": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "minItems": 0,
+          "uniqueItems": true
+        }
+      },
+      "required": [
+        "classification",
+        "text",
+        "evidence_refs"
+      ],
+      "additionalProperties": false
+    },
+    "actual": {
+      "type": "object",
+      "properties": {
+        "decision": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1
+        },
+        "decision_by": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1
+        },
+        "gate": {
+          "enum": [
+            "ALLOW",
+            "REVIEW",
+            "HALT",
+            null
+          ]
+        },
+        "action_taken": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1
+        }
+      },
+      "required": [
+        "decision",
+        "decision_by",
+        "gate",
+        "action_taken"
+      ],
+      "additionalProperties": false
+    },
+    "outcome": {
+      "type": "object",
+      "properties": {
+        "result": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1
+        },
+        "success": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "verification_method": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1
+        },
+        "verified": {
+          "type": "boolean"
+        },
+        "verified_by": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1
+        },
+        "evidence_refs": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "minItems": 0,
+          "uniqueItems": true
+        }
+      },
+      "required": [
+        "result",
+        "success",
+        "verification_method",
+        "verified",
+        "verified_by",
+        "evidence_refs"
+      ],
+      "additionalProperties": false
+    },
+    "evaluation": {
+      "type": "object",
+      "properties": {
+        "recommendation_correct": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "gate_correct": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "reasoning_issue": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1
+        },
+        "correction": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1
+        },
+        "lesson": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1
+        }
+      },
+      "required": [
+        "recommendation_correct",
+        "gate_correct",
+        "reasoning_issue",
+        "correction",
+        "lesson"
+      ],
+      "additionalProperties": false
+    },
+    "review": {
+      "type": "object",
+      "properties": {
+        "reviewer": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1
+        },
+        "reviewer_role": {
+          "enum": [
+            "human",
+            "agent",
+            "unreviewed"
+          ]
+        },
+        "context_sufficient": {
+          "type": "boolean"
+        },
+        "no_secrets": {
+          "type": "boolean"
+        },
+        "no_ambiguous_claims": {
+          "type": "boolean"
+        },
+        "reusable_lesson": {
+          "type": "boolean"
+        },
+        "correction_hashes": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}$"
+          },
+          "minItems": 0,
+          "uniqueItems": true
+        }
+      },
+      "required": [
+        "reviewer",
+        "reviewer_role",
+        "context_sufficient",
+        "no_secrets",
+        "no_ambiguous_claims",
+        "reusable_lesson",
+        "correction_hashes"
+      ],
+      "additionalProperties": false
+    },
+    "provenance": {
+      "type": "object",
+      "properties": {
+        "producer": {
+          "type": "string",
+          "minLength": 1
+        },
+        "model": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1
+        },
+        "operator": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1
+        },
+        "workspace": {
+          "type": "string",
+          "minLength": 1
+        },
+        "source_conversation": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1
+        },
+        "capture_method": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "producer",
+        "model",
+        "operator",
+        "workspace",
+        "source_conversation",
+        "capture_method"
+      ],
+      "additionalProperties": false
+    },
+    "episode": {
+      "type": "object",
+      "properties": {
+        "episode_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "timestamp": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "status": {
+          "enum": [
+            "incomplete",
+            "completed"
+          ]
+        },
+        "objective": {
+          "type": "string",
+          "minLength": 1
+        },
+        "project": {
+          "type": "string",
+          "minLength": 1
+        },
+        "task_type": {
+          "type": "string",
+          "minLength": 1
+        },
+        "context": {
+          "type": "object",
+          "properties": {
+            "claims": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/claim"
+              },
+              "minItems": 1,
+              "uniqueItems": true
+            },
+            "constraints": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1
+              },
+              "minItems": 1,
+              "uniqueItems": true
+            },
+            "authority": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1
+              },
+              "minItems": 1,
+              "uniqueItems": true
+            },
+            "evidence": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/evidence"
+              },
+              "minItems": 1,
+              "uniqueItems": true
+            }
+          },
+          "required": [
+            "claims",
+            "constraints",
+            "authority",
+            "evidence"
+          ],
+          "additionalProperties": false
+        },
+        "shadow": {
+          "type": "object",
+          "properties": {
+            "current_state": {
+              "type": "string",
+              "minLength": 1
+            },
+            "recommended_action": {
+              "type": "string",
+              "minLength": 1
+            },
+            "operation": {
+              "enum": [
+                "read_only",
+                "component_write",
+                "existing_repo_write",
+                "existing_project_tests",
+                "external_action",
+                "publish",
+                "deploy",
+                "delete",
+                "credentials",
+                "permissions",
+                "secrets"
+              ]
+            },
+            "expected_result": {
+              "type": "string",
+              "minLength": 1
+            },
+            "gate": {
+              "enum": [
+                "ALLOW",
+                "REVIEW",
+                "HALT"
+              ]
+            },
+            "required_evidence": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1
+              },
+              "minItems": 1,
+              "uniqueItems": true
+            },
+            "confidence": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1
+            }
+          },
+          "required": [
+            "current_state",
+            "recommended_action",
+            "operation",
+            "expected_result",
+            "gate",
+            "required_evidence",
+            "confidence"
+          ],
+          "additionalProperties": false
+        },
+        "actual": {
+          "$ref": "#/$defs/actual"
+        },
+        "outcome": {
+          "$ref": "#/$defs/outcome"
+        },
+        "evaluation": {
+          "$ref": "#/$defs/evaluation"
+        },
+        "training_review": {
+          "$ref": "#/$defs/review"
+        },
+        "dataset_split": {
+          "enum": [
+            "learning",
+            "held_out"
+          ]
+        },
+        "provenance": {
+          "$ref": "#/$defs/provenance"
+        }
+      },
+      "required": [
+        "episode_id",
+        "timestamp",
+        "status",
+        "objective",
+        "project",
+        "task_type",
+        "context",
+        "shadow",
+        "actual",
+        "outcome",
+        "evaluation",
+        "training_review",
+        "dataset_split",
+        "provenance"
+      ],
+      "additionalProperties": false
+    },
+    "correction": {
+      "type": "object",
+      "properties": {
+        "episode_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "correction": {
+          "type": "string",
+          "minLength": 1
+        },
+        "lesson": {
+          "type": "string",
+          "minLength": 1
+        },
+        "reviewer": {
+          "type": "string",
+          "minLength": 1
+        },
+        "evidence": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/evidence"
+          },
+          "minItems": 1,
+          "uniqueItems": true
+        }
+      },
+      "required": [
+        "episode_id",
+        "correction",
+        "lesson",
+        "reviewer",
+        "evidence"
+      ],
+      "additionalProperties": false
+    },
+    "eligibility": {
+      "type": "object",
+      "properties": {
+        "eligible": {
+          "type": "boolean"
+        },
+        "reasons": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "minItems": 0,
+          "uniqueItems": true
+        }
+      },
+      "required": [
+        "eligible",
+        "reasons"
+      ],
+      "additionalProperties": false
+    }
+  }
+}

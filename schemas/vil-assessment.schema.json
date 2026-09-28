@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "DAXXER VIL Assessment v0.2",
+  "type": "object",
+  "required": ["model", "signal", "signal_weights", "weighted_signal", "verifiability", "verifiability_weights", "weighted_verifiability", "final", "limiting_dimension", "thresholds", "route"],
+  "properties": {
+    "model": {"const": "vil-v0.2-shadow-intake-profile"},
+    "signal": {"type": "object"},
+    "signal_weights": {"type": "object"},
+    "weighted_signal": {"type": "number", "minimum": 0, "maximum": 1},
+    "verifiability": {"type": "object"},
+    "verifiability_weights": {"type": "object"},
+    "weighted_verifiability": {"type": "number", "minimum": 0, "maximum": 1},
+    "final": {"type": "number", "minimum": 0, "maximum": 1},
+    "limiting_dimension": {"enum": ["signal", "verifiability"]},
+    "thresholds": {"type": "object"},
+    "route": {"enum": ["retained", "pending", "rejected"]}
+  },
+  "additionalProperties": false
+}

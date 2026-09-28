@@ -1,0 +1,183 @@
+{
+  "type": "object",
+  "properties": {
+    "schema_version": {
+      "const": "0.2"
+    },
+    "event_id": {
+      "type": "string",
+      "pattern": "^DXI-[A-F0-9]{24}$"
+    },
+    "sequence": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "recorded_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "previous_hash": {
+      "oneOf": [
+        {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "observation": {
+      "type": "object",
+      "properties": {
+        "source_root": {"type": "string", "minLength": 1},
+        "source_id": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9-]{1,63}$"
+        },
+        "relative_path": {
+          "type": "string",
+          "minLength": 1
+        },
+        "size": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "mtime_ns": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "extension": {
+          "type": "string"
+        },
+        "metadata_only": {
+          "type": "boolean"
+        },
+        "capture_reason": {
+          "type": "string",
+          "minLength": 1
+        },
+        "content_sha256": {
+          "oneOf": [
+            {
+              "type": "string",
+              "pattern": "^[a-f0-9]{64}$"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "content": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "fingerprint": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "trust": {
+          "const": "untrusted_candidate_evidence"
+        }
+      },
+      "required": [
+        "source_root",
+        "source_id",
+        "relative_path",
+        "size",
+        "mtime_ns",
+        "extension",
+        "metadata_only",
+        "capture_reason",
+        "content_sha256",
+        "content",
+        "fingerprint",
+        "trust"
+      ],
+      "additionalProperties": false
+    },
+    "safety": {
+      "type": "object",
+      "properties": {
+        "decision": {
+          "const": "ALLOW"
+        },
+        "filter": {
+          "const": "shadow-intake-safety-v0.2"
+        },
+        "secret_scan": {
+          "enum": [
+            "heuristic_no_match",
+            "not_scanned_metadata"
+          ]
+        }
+      },
+      "required": [
+        "decision",
+        "filter",
+        "secret_scan"
+      ],
+      "additionalProperties": false
+    },
+    "vil": {
+      "type": "object"
+    },
+    "authority": {
+      "type": "object",
+      "properties": {
+        "operation": {
+          "const": "read_only"
+        },
+        "gate": {
+          "const": "ALLOW"
+        },
+        "may_execute_actions": {
+          "const": false
+        },
+        "note": {
+          "const": "Component intake only; reviewer required before a ledger episode."
+        }
+      },
+      "required": [
+        "operation",
+        "gate",
+        "may_execute_actions",
+        "note"
+      ],
+      "additionalProperties": false
+    },
+    "route": {
+      "enum": [
+        "retained",
+        "pending",
+        "rejected"
+      ]
+    },
+    "ledger_status": {
+      "const": "candidate_only"
+    },
+    "content_hash": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    }
+  },
+  "required": [
+    "schema_version",
+    "event_id",
+    "sequence",
+    "recorded_at",
+    "previous_hash",
+    "observation",
+    "safety",
+    "vil",
+    "authority",
+    "route",
+    "ledger_status",
+    "content_hash"
+  ],
+  "additionalProperties": false,
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "DAXXER intake event v0.2"
+}

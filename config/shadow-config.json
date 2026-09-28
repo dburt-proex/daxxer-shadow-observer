@@ -1,0 +1,59 @@
+{
+  "schema_version": "0.2",
+  "first_run_mode": "backfill",
+  "poll_seconds": 30,
+  "limits": {
+    "max_events_per_scan": 25,
+    "max_content_bytes": 65536,
+    "max_state_entries": 5000
+  },
+  "safe_content_extensions": [
+    ".csv",
+    ".json",
+    ".jsonl",
+    ".md",
+    ".txt",
+    ".yaml",
+    ".yml"
+  ],
+  "excluded_directory_names": [
+    ".git",
+    ".hg",
+    ".svn",
+    "__pycache__",
+    "node_modules",
+    "venv",
+    ".venv",
+    "dist",
+    "build",
+    "runtime",
+    "queue",
+    "data",
+    "evidence",
+    "reports",
+    "work"
+  ],
+  "secret_name_patterns": [
+    "(^|[._-])(secret|secrets|credential|credentials|password|passwd|token|tokens|authorization|api[-_]?key|private[-_]?key|id_rsa)($|[._-])",
+    "\\.(pem|p12|pfx|key)$"
+  ],
+  "vil": {
+    "thresholds": {
+      "retain": 0.75,
+      "queue": 0.45
+    }
+  },
+  "sources": [
+    {
+      "id": "controlled-inbox",
+      "path": "${COMPONENT_ROOT}/inbox",
+      "recursive": true,
+      "max_depth": 4,
+      "max_files": 200,
+      "metadata_only": false,
+      "relevance": 0.95,
+      "source_quality": 0.9,
+      "corroboration": 0
+    }
+  ]
+}
