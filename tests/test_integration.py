@@ -24,7 +24,8 @@ class IntegrationTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
-        self.root = Path(self.temp.name)
+        # Windows TEMP can use an 8.3 alias; source configuration resolves it.
+        self.root = Path(self.temp.name).resolve()
         initialize(self.root)
         (self.root / "config").mkdir()
         self.config = self.root / "config/shadow-config.json"
