@@ -234,6 +234,95 @@ class ShadowRuntimeTests(unittest.TestCase):
         state = json.loads((self.root / "runtime" / "scan-state.json").read_text(encoding="utf-8"))
         self.assertFalse(state["baselined"])
 
+    def test_unicode_line_separators_in_content_do_not_corrupt_queue(self):
+        (self.root / "inbox" / "pasted.md").write_text("one\u2028two\u2029three\u0085four", encoding="utf-8")
+        self.assertEqual(run_once(self.config_path, self.root)["new"], 1)
+        events = AppendQueue(self.root / "queue" / "retained" / "intake-events.jsonl").load()
+        self.assertEqual(events[0]["observation"]["content"], "one\u2028two\u2029three\u0085four")
+        self.assertEqual(run_once(self.config_path, self.root)["duplicate"], 1)
+
+    def test_missing_source_does_not_block_baseline_of_other_sources(self):
+        value = config_value(self.root, first_run_mode="baseline")
+        value["sources"].append({**value["sources"][0], "id": "absent", "path": str(self.root / "absent")})
+        self.write_config(value)
+        path = self.root / "inbox" / "existing.md"
+        path.write_text("existing", encoding="utf-8")
+        first = run_once(self.config_path, self.root)
+        self.assertEqual((first["baselined"], first["source_errors"]), (1, 1))
+        path.write_text("changed", encoding="utf-8")
+        self.assertEqual(run_once(self.config_path, self.root)["new"], 1)
+        # The absent source is still baselined, not backfilled, once it appears.
+        (self.root / "absent").mkdir()
+        (self.root / "absent" / "old.md").write_text("history", encoding="utf-8")
+        later = run_once(self.config_path, self.root)
+        later = {key: later[key] + run_once(self.config_path, self.root)[key] for key in ("new", "baselined")}
+        self.assertEqual(later, {"new": 0, "baselined": 1})
+
+    def test_config_edit_does_not_rebaseline_unchanged_source(self):
+        self.write_config(config_value(self.root, first_run_mode="baseline"))
+        path = self.root / "inbox" / "existing.md"
+        path.write_text("existing", encoding="utf-8")
+        run_once(self.config_path, self.root)
+        path.write_text("changed while off", encoding="utf-8")
+        self.write_config(config_value(self.root, first_run_mode="baseline", poll_seconds=5))
+        result = run_once(self.config_path, self.root)
+        self.assertEqual((result["new"], result["baselined"]), (1, 0))
+
+    def test_repointed_source_is_baselined_again(self):
+        self.write_config(config_value(self.root, first_run_mode="baseline"))
+        run_once(self.config_path, self.root)
+        moved = self.root / "moved"
+        moved.mkdir()
+        (moved / "history.md").write_text("history", encoding="utf-8")
+        value = config_value(self.root, first_run_mode="baseline")
+        value["sources"][0]["path"] = str(moved)
+        self.write_config(value)
+        result = run_once(self.config_path, self.root)
+        self.assertEqual((result["new"], result["baselined"]), (0, 1))
+
+    def test_scan_state_without_source_paths_keeps_its_baseline(self):
+        self.write_config(config_value(self.root, first_run_mode="baseline"))
+        path = self.root / "inbox" / "existing.md"
+        path.write_text("existing", encoding="utf-8")
+        run_once(self.config_path, self.root)
+        state_path = self.root / "runtime" / "scan-state.json"
+        state = json.loads(state_path.read_text(encoding="utf-8"))
+        del state["source_paths"]
+        state_path.write_text(json.dumps(state), encoding="utf-8")
+        path.write_text("changed", encoding="utf-8")
+        self.assertEqual(run_once(self.config_path, self.root)["new"], 1)
+
+    def test_scan_reports_heartbeat_per_file(self):
+        for name in ("a.md", "b.md"):
+            (self.root / "inbox" / name).write_text(name, encoding="utf-8")
+        beats = []
+        run_once(self.config_path, self.root, heartbeat=lambda: beats.append(1))
+        self.assertEqual(len(beats), 2)
+
+    def test_interrupted_launch_record_does_not_block_control(self):
+        runtime = self.root / "runtime"
+        runtime.mkdir()
+        staged = {
+            "schema_version": "0.2", "pid": 0, "token": "staged",
+            "root": str(self.root.resolve()), "config": str(self.config_path.resolve()),
+            "script": str((ROOT / "scripts" / "shadow_runtime.py").resolve()),
+            "python": str(Path(sys.executable).resolve()), "status": "launching", "created_at": "2026-09-18T00:00:00+00:00",
+        }
+        (runtime / "shadow-process.json").write_text(json.dumps(staged), encoding="utf-8")
+        self.assertEqual(inspect_status(self.root)["state"], "stale")
+        self.assertEqual(stop(self.root)["state"], "off")
+        self.assertEqual(inspect_status(self.root)["state"], "off")
+        (runtime / "shadow-process.json").write_text(json.dumps({**staged, "status": "running"}), encoding="utf-8")
+        with self.assertRaises(RuntimeErrorSafe):
+            inspect_status(self.root)
+
+    def test_failed_launch_leaves_a_stopped_record(self):
+        from unittest.mock import patch
+        with patch("shadowctl.subprocess.Popen", side_effect=OSError("no interpreter")):
+            with self.assertRaises(RuntimeErrorSafe):
+                start(self.root, self.config_path)
+        self.assertEqual(inspect_status(self.root)["state"], "off")
+
     def test_future_timestamp_is_penalized(self):
         config = self.loaded()
         path = self.root / "inbox" / "future.md"

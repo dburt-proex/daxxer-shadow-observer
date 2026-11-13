@@ -1,5 +1,6 @@
 """Local append-only shadow ledger. Python 3.11+, standard library only."""
 import copy
+import functools
 import hashlib
 import json
 import math
@@ -121,7 +122,14 @@ def check(value, schema, root=None, location='$'):
             raise Invalid(location + ': outside bounds')
 
 
+def json_lines(raw):
+    """Split JSONL on LF only; str.splitlines() also breaks on U+2028, U+2029 and U+0085."""
+    return raw.decode('utf-8').split('\n')[:-1]
+
+
+@functools.lru_cache(maxsize=None)
 def schema(name):
+    """Parsed schema, cached for the process. Callers must not mutate it."""
     return parse((SCHEMAS / name).read_text(encoding='utf-8'))
 
 
@@ -205,7 +213,7 @@ class Ledger:
         except StorageError as exc:
             raise Invalid(str(exc)) from exc
 
-    def load(self):
+    def _read(self):
         records = []
         contract = schema('record.schema.json')
         for kind in STREAMS:
@@ -214,7 +222,7 @@ class Ledger:
             if raw and not raw.endswith(b'\n'):
                 raise Invalid(STREAMS[kind] + ': missing final newline / possible torn write')
             try:
-                lines = raw.decode('utf-8').splitlines()
+                lines = json_lines(raw)
             except UnicodeError as exc:
                 raise Invalid('invalid UTF-8') from exc
             previous_sequence = 0
@@ -229,8 +237,16 @@ class Ledger:
                 except Invalid as exc:
                     raise Invalid(f'{STREAMS[kind]}:{number}: {exc}') from exc
         records.sort(key=lambda r: r['sequence'])
-        self.validate_records(records)
         return records
+
+    def load(self):
+        return self.load_validated()[0]
+
+    def load_validated(self):
+        """Read and validate once; returns (records, latest, corrections)."""
+        records = self._read()
+        latest, corrections = self.validate_records(records)
+        return records, latest, corrections
 
     def validate_records(self, records):
         latest, corrections, ids = {}, {}, set()
@@ -280,8 +296,7 @@ class Ledger:
         if kind not in STREAMS:
             raise Invalid('unknown record kind')
         with self.lock():
-            records = self.load()
-            _, corrections = self.validate_records(records)
+            records, _, corrections = self.load_validated()
             if kind == 'correction':
                 training = {'eligible': False, 'reasons': ['correction annotation is not a training episode']}
             else:
@@ -303,8 +318,7 @@ class Ledger:
             return record
 
     def summary(self):
-        records = self.load()
-        latest, corrections = self.validate_records(records)
+        records, latest, corrections = self.load_validated()
         episodes = [r['payload'] for r in latest.values()]
         return {'episodes_captured': len(episodes),
                 'completed_episodes': sum(p['status'] == 'completed' for p in episodes),

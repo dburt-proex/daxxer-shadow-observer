@@ -9,12 +9,11 @@ import re
 import signal
 import sys
 import time
-from datetime import datetime, timezone
 from pathlib import Path
 
 from vil import VILError, assess
 from storage import StorageError, file_lock, safe_path
-from ledger import Invalid, check, schema
+from ledger import Invalid, canonical, check, digest, json_lines, now as utc_now, parse, record_hash as event_hash, schema
 
 
 COMPONENT_ROOT = Path(__file__).resolve().parents[1]
@@ -34,36 +33,11 @@ class RuntimeErrorSafe(StorageError):
     pass
 
 
-def utc_now() -> str:
-    return datetime.now(timezone.utc).isoformat()
-
-
-def canonical(value) -> bytes:
-    return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False).encode("utf-8")
-
-
 def strict_json(text: str):
-    def pairs(items):
-        result = {}
-        for key, value in items:
-            if key in result:
-                raise RuntimeErrorSafe("duplicate JSON key")
-            result[key] = value
-        return result
-    def bad_constant(_value):
-        raise RuntimeErrorSafe("non-finite JSON number")
     try:
-        return json.loads(text, object_pairs_hook=pairs, parse_constant=bad_constant)
-    except (json.JSONDecodeError, UnicodeError, RecursionError) as exc:
+        return parse(text)
+    except Invalid as exc:
         raise RuntimeErrorSafe("invalid JSON") from exc
-
-
-def digest(value) -> str:
-    return hashlib.sha256(canonical(value)).hexdigest()
-
-
-def event_hash(event: dict) -> str:
-    return digest({key: value for key, value in event.items() if key != "content_hash"})
 
 
 def _read_json(path: Path) -> dict:
@@ -345,7 +319,7 @@ class AppendQueue:
             raise RuntimeErrorSafe(f"torn queue write: {self.path}")
         records = []
         ids = set()
-        for number, line in enumerate(raw.decode("utf-8").splitlines(), 1):
+        for number, line in enumerate(json_lines(raw), 1):
             try:
                 record = strict_json(line)
                 check(record, schema("intake-event.schema.json"))
@@ -426,15 +400,13 @@ class AppendQueue:
         try:
             with file_lock(safe_path(self.root, "queue/.intake.lock")):
                 all_records = _load_all_routes(self.root)
-                validate_all_queues(self.root)
-                if candidate["event_id"] in {r["event_id"] for r in all_records}:
+                if candidate["event_id"] in _check_chain(all_records):
                     raise RuntimeErrorSafe("duplicate intake event")
                 record = {"schema_version": "0.2", "sequence": len(all_records) + 1,
                           "recorded_at": utc_now(),
                           "previous_hash": all_records[-1]["content_hash"] if all_records else None,
                           **candidate}
                 record["content_hash"] = event_hash(record)
-                check(record, schema("intake-event.schema.json"))
                 self.validate_record(record)
                 encoded = canonical(record) + b"\n"
                 with self.path.open("ab", buffering=0) as handle:
@@ -451,17 +423,29 @@ def _atomic_json(path: Path, value: dict) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_name(path.name + f".{os.getpid()}.tmp")
     temporary.write_bytes(canonical(value) + b"\n")
-    os.replace(temporary, path)
+    for attempt in range(20):
+        try:
+            os.replace(temporary, path)
+            return
+        except PermissionError:
+            # Windows refuses to replace a file another process is reading; the
+            # reader holds it only briefly, so retry instead of failing the writer.
+            if attempt == 19:
+                raise
+            time.sleep(0.05)
 
 
 def _load_scan_state(path: Path) -> dict:
     if not path.exists():
-        return {"schema_version": "0.2", "fingerprints": {}, "cursors": {}, "baseline_complete_sources": [], "baselined": False, "config_hash": None, "source_offset": 0}
+        return {"schema_version": "0.2", "fingerprints": {}, "cursors": {}, "baseline_complete_sources": [], "baselined": False, "config_hash": None, "source_offset": 0, "source_paths": {}}
     value = _read_json(path)
-    if set(value) != {"schema_version", "fingerprints", "cursors", "baseline_complete_sources", "baselined", "config_hash", "source_offset"} or value["schema_version"] != "0.2" or type(value["fingerprints"]) is not dict or type(value["cursors"]) is not dict or type(value["baseline_complete_sources"]) is not list or type(value["baselined"]) is not bool:
+    value.setdefault("source_paths", None)  # absent in state written before this field existed
+    if set(value) != {"schema_version", "fingerprints", "cursors", "baseline_complete_sources", "baselined", "config_hash", "source_offset", "source_paths"} or value["schema_version"] != "0.2" or type(value["fingerprints"]) is not dict or type(value["cursors"]) is not dict or type(value["baseline_complete_sources"]) is not list or type(value["baselined"]) is not bool:
         raise RuntimeErrorSafe("invalid scan state")
     if any(type(k) is not str or type(v) is not str for k, v in value["fingerprints"].items()):
         raise RuntimeErrorSafe("invalid scan fingerprints")
+    if value["source_paths"] is not None and (type(value["source_paths"]) is not dict or any(type(v) is not str for v in value["source_paths"].values())):
+        raise RuntimeErrorSafe("invalid scan source paths")
     if type(value["source_offset"]) is not int or value["source_offset"] < 0 or any(type(v) is not str for v in value["cursors"].values()):
         raise RuntimeErrorSafe("invalid scan cursor")
     return value
@@ -476,9 +460,12 @@ def _load_all_routes(root: Path) -> list[dict]:
 
 
 def validate_all_queues(root: Path) -> set[str]:
+    return _check_chain(_load_all_routes(root))
+
+
+def _check_chain(records: list[dict]) -> set[str]:
     ids = set()
     previous = None
-    records = _load_all_routes(root)
     for sequence, record in enumerate(records, 1):
         if record["sequence"] != sequence or record["previous_hash"] != previous:
             raise RuntimeErrorSafe("broken global intake sequence or hash chain")
@@ -493,7 +480,7 @@ def run_once(config_path: Path, root: Path = COMPONENT_ROOT, *, stop_check=None,
     root = Path(root).resolve()
     try:
         with file_lock(safe_path(root, "runtime/.scan.lock")):
-            result = _scan_once(config_path, root, stop_check=stop_check)
+            result = _scan_once(config_path, root, stop_check=stop_check, heartbeat=heartbeat)
             from reviewer import review_queue
             if not result["stopped"]:
                 result["review"] = review_queue(root, stop_check=stop_check, source_config=config_path, heartbeat=heartbeat)
@@ -505,26 +492,37 @@ def run_once(config_path: Path, root: Path = COMPONENT_ROOT, *, stop_check=None,
         raise RuntimeErrorSafe(str(exc)) from exc
 
 
-def _scan_once(config_path: Path, root: Path = COMPONENT_ROOT, *, stop_check=None) -> dict:
+def _scan_once(config_path: Path, root: Path = COMPONENT_ROOT, *, stop_check=None, heartbeat=None) -> dict:
     root = Path(root).resolve()
     config = load_config(config_path, root)
     state_path = safe_path(root, "runtime/scan-state.json")
     state = _load_scan_state(state_path)
     config_hash = digest(config)
+    source_paths = {source["id"]: source["path"] for source in config["sources"]}
+    source_ids = set(source_paths)
+    if state["source_paths"] is None:
+        # State from before per-source paths were recorded: it is only known to
+        # describe these sources if the configuration is byte-for-byte the same.
+        state["source_paths"] = source_paths if state["config_hash"] == config_hash else {}
     if state["config_hash"] != config_hash:
-        state.update(cursors={}, baseline_complete_sources=[], baselined=False, config_hash=config_hash)
+        # Only a new or repointed source needs a fresh baseline. Re-baselining an
+        # unchanged source would silently absorb its not-yet-emitted changes.
+        state.update(cursors={}, config_hash=config_hash)
+    completed_sources = {source_id for source_id in state["baseline_complete_sources"]
+                         if source_id in source_paths and state["source_paths"].get(source_id) == source_paths[source_id]}
     known_ids = validate_all_queues(root)
     counts = {"observed": 0, "baselined": 0, "new": 0, "duplicate": 0, "retained": 0, "pending": 0, "rejected": 0, "source_errors": 0, "stopped": False}
     fingerprints = state["fingerprints"]
-    baseline_only = not state["baselined"] and config["first_run_mode"] == "baseline"
-    completed_sources = set(state["baseline_complete_sources"])
+    baseline_mode = config["first_run_mode"] == "baseline"
+    any_baseline = False
     event_limit = config["limits"]["max_events_per_scan"]
     stop = False
     offset = state["source_offset"] % len(config["sources"])
     sources = config["sources"][offset:] + config["sources"][:offset]
     for source in sources:
-        if baseline_only and source["id"] in completed_sources:
-            continue
+        # Baseline is per source, so one unavailable source cannot hold the others back.
+        baseline_only = baseline_mode and source["id"] not in completed_sources
+        any_baseline = any_baseline or baseline_only
         source_path = Path(source["path"])
         if not source_path.is_dir() or source_path.is_symlink() or getattr(source_path.lstat(), "st_file_attributes", 0) & 0x400:
             counts["source_errors"] += 1
@@ -533,6 +531,8 @@ def _scan_once(config_path: Path, root: Path = COMPONENT_ROOT, *, stop_check=Non
         prior_cursor = state["cursors"].get(source["id"])
         for path in _iter_files(source, config, prior_cursor):
             source_observed += 1
+            if heartbeat:
+                heartbeat()
             if stop_check and stop_check():
                 counts["stopped"] = True
                 stop = True
@@ -569,23 +569,20 @@ def _scan_once(config_path: Path, root: Path = COMPONENT_ROOT, *, stop_check=Non
             break
         if source_observed == 0 and prior_cursor is not None:
             state["cursors"].pop(source["id"], None)
-            if baseline_only:
-                completed_sources.add(source["id"])
-        elif baseline_only and source_observed < source["max_files"] and not counts["stopped"]:
-            state["cursors"].pop(source["id"], None)
             completed_sources.add(source["id"])
         elif source_observed < source["max_files"]:
             state["cursors"].pop(source["id"], None)
+            completed_sources.add(source["id"])
     maximum = config["limits"]["max_state_entries"]
     if len(fingerprints) > maximum:
-        if baseline_only:
+        if any_baseline:
             raise RuntimeErrorSafe("baseline exceeds state capacity; raise max_state_entries or reduce source scope")
         fingerprints = dict(list(fingerprints.items())[-maximum:])
-    source_ids = {source["id"] for source in config["sources"]}
-    baselined = state["baselined"] or (baseline_only and completed_sources == source_ids and not counts["stopped"])
+    baselined = completed_sources >= source_ids if baseline_mode else state["baselined"]
     _atomic_json(state_path, {"schema_version": "0.2", "fingerprints": fingerprints, "cursors": state["cursors"],
                               "baseline_complete_sources": sorted(completed_sources), "baselined": baselined,
-                              "config_hash": config_hash, "source_offset": (offset + 1) % len(sources)})
+                              "config_hash": config_hash, "source_offset": (offset + 1) % len(sources),
+                              "source_paths": {source_id: source_paths[source_id] for source_id in sorted(completed_sources)}})
     validate_all_queues(root)
     return counts
 
@@ -636,6 +633,14 @@ def watch(config_path: Path, root: Path, state_path: Path, token: str) -> int:
                           runtime_python=info["executable"],
                           process_identity={"created": info["created"], "executable": info["executable"]})
     stopping = False
+    last_beat = time.monotonic()
+
+    def beat():
+        # Called per scanned file and per reviewed event; throttle the state writes.
+        nonlocal last_beat
+        if time.monotonic() - last_beat >= 2:
+            _update_control_state(state_path, token, heartbeat_at=utc_now())
+            last_beat = time.monotonic()
 
     def request_stop(_signum, _frame):
         nonlocal stopping
@@ -646,7 +651,7 @@ def watch(config_path: Path, root: Path, state_path: Path, token: str) -> int:
     while not stopping:
         try:
             counts = run_once(config_path, root, stop_check=lambda: stop_requested(root, token),
-                              heartbeat=lambda: _update_control_state(state_path, token, heartbeat_at=utc_now()))
+                              heartbeat=beat)
             degraded = bool(counts["source_errors"] or counts.get("review", {}).get("errors"))
             _update_control_state(state_path, token, status="error" if degraded else "running", heartbeat_at=utc_now(), last_scan=counts, last_error="SourceOrReviewError" if degraded else None)
         except Exception as exc:  # watcher must report failure without leaking content

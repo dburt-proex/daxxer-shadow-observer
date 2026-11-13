@@ -169,8 +169,32 @@ class IntegrationTests(unittest.TestCase):
         self.write_review()
         self.value["sources"][0]["metadata_only"] = True
         self.config.write_text(json.dumps(self.value))
-        self.assertEqual(review_queue(self.root)["errors"], 1)
+        result = review_queue(self.root)
+        self.assertEqual((result["revoked"], result["errors"], result["captured"]), (1, 0, 0))
         self.assertEqual(Ledger(self.root).summary()["records"], 0)
+
+    def test_revoked_events_do_not_consume_the_review_budget(self):
+        self.review["enabled"] = False
+        self.write_review()
+        self.capture()
+        self.review.update(enabled=True, max_per_scan=1)
+        self.write_review()
+        self.value["sources"][0]["metadata_only"] = True
+        self.config.write_text(json.dumps(self.value))
+        for _ in range(3):
+            result = run_once(self.config, self.root)
+            self.assertEqual((result["review"]["revoked"], result["review"]["errors"]), (1, 0))
+
+    def test_interrupted_evidence_write_does_not_block_review(self):
+        self.review["enabled"] = False
+        self.write_review()
+        event = self.event()
+        self.review["enabled"] = True
+        self.write_review()
+        (self.root / "evidence").mkdir(exist_ok=True)
+        (self.root / "evidence" / (event["event_id"] + ".json.tmp")).write_bytes(b'{"trunc')
+        self.assertEqual(review_queue(self.root)["captured"], 1)
+        self.assertEqual(list((self.root / "evidence").glob("*.tmp")), [])
 
     def test_deleted_cursor_does_not_starve_later_files(self):
         config = load_config(self.config, self.root)

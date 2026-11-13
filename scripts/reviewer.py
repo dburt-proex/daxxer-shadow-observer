@@ -2,6 +2,7 @@
 from pathlib import Path
 import hashlib
 import json
+import os
 import re
 import urllib.request
 
@@ -111,7 +112,7 @@ def configure_model(model=None, root=ROOT):
     target = safe_path(root, "config/reviewer.local.json")
     temp = safe_path(root, "config/reviewer.local.tmp")
     temp.write_bytes(canonical(config) + b"\n")
-    __import__("os").replace(temp, target)
+    os.replace(temp, target)
     return config
 
 
@@ -125,8 +126,13 @@ def episode_from(event, root, advice=None, model=None):
         if target.read_bytes() != evidence_bytes:
             raise StorageError("immutable evidence collision")
     else:
-        with target.open("xb") as handle:
+        # Publish atomically so an interrupted write never leaves a truncated artifact.
+        temporary = safe_path(root, artifact + ".tmp")
+        with temporary.open("wb") as handle:
             handle.write(evidence_bytes)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary, target)
     evidence = {"evidence_id": event_id, "source": observation["source_root"] + "/" + observation["relative_path"],
                 "artifact": artifact, "sha256": hashlib.sha256(evidence_bytes).hexdigest(),
                 "captured_at": event["recorded_at"], "method": "validated intake snapshot; source text untrusted"}
@@ -163,7 +169,7 @@ def episode_from(event, root, advice=None, model=None):
 def review_queue(root=ROOT, *, stop_check=None, source_config=None, transport=_ollama_request, heartbeat=None):
     root = Path(root).resolve()
     config = settings(root)
-    counts = {"enabled": config["enabled"], "captured": 0, "skipped": 0, "errors": 0}
+    counts = {"enabled": config["enabled"], "captured": 0, "skipped": 0, "revoked": 0, "errors": 0}
     if not config["enabled"]:
         return counts
     from shadow_runtime import _load_all_routes, load_config, validate_all_queues
@@ -173,7 +179,7 @@ def review_queue(root=ROOT, *, stop_check=None, source_config=None, transport=_o
     with file_lock(safe_path(root, "runtime/.review.lock")):
         validate_all_queues(root)
         ledger = Ledger(root)
-        latest, _ = ledger.validate_records(ledger.load())
+        _, latest, _ = ledger.load_validated()
         review_state = safe_path(root, "runtime/review-state.json")
         offset = 0
         if review_state.exists():
@@ -192,16 +198,19 @@ def review_queue(root=ROOT, *, stop_check=None, source_config=None, transport=_o
             if event["route"] == "rejected" or "DXE-" + event["event_id"][4:] in latest:
                 counts["skipped"] += 1
                 continue
+            observation = event["observation"]
+            approved = allowed.get(observation["source_id"])
+            if not approved or approved["path"] != observation["source_root"] or approved["metadata_only"] and observation["content"] is not None:
+                # The source is no longer approved as captured. That is a standing
+                # configuration fact, not a failure: never review it, never retry it.
+                counts["revoked"] += 1
+                continue
             if attempted >= config["max_per_scan"] or stop_check and stop_check():
+                visited -= 1  # not processed; start here next time
                 break
             attempted += 1
             if heartbeat:
                 heartbeat()
-            observation = event["observation"]
-            approved = allowed.get(observation["source_id"])
-            if not approved or approved["path"] != observation["source_root"] or approved["metadata_only"] and observation["content"] is not None:
-                counts["errors"] += 1
-                continue
             try:
                 advice = model_advice(event, config, transport) if config["mode"] == "ollama" else None
                 if stop_check and stop_check():
