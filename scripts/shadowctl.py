@@ -12,7 +12,7 @@ import sys
 import time
 from pathlib import Path
 
-from shadow_runtime import COMPONENT_ROOT, RuntimeErrorSafe, canonical, run_once, strict_json, utc_now, validate_all_queues
+from shadow_runtime import COMPONENT_ROOT, RuntimeErrorSafe, _atomic_json, run_once, strict_json, utc_now, validate_all_queues
 from storage import StorageError, file_lock, safe_path
 
 
@@ -26,14 +26,6 @@ if os.name == "nt":
     ctypes.windll.kernel32.LocalFree.argtypes = [ctypes.c_void_p]
 
 
-def _atomic_json(path: Path, value: dict) -> None:
-    safe_path(path.parent.parent, path.relative_to(path.parent.parent))
-    path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = path.with_name(path.name + f".{os.getpid()}.tmp")
-    temporary.write_bytes(canonical(value) + b"\n")
-    os.replace(temporary, path)
-
-
 def _read_state(path: Path) -> dict | None:
     if not path.exists():
         return None
@@ -45,7 +37,9 @@ def _read_state(path: Path) -> dict | None:
     required = {"schema_version", "pid", "token", "root", "config", "script", "python", "status", "created_at"}
     if type(state) is not dict or not required <= set(state) or state.get("schema_version") != "0.2":
         raise RuntimeErrorSafe("control state is invalid; refusing process action")
-    if type(state["pid"]) is not int or state["pid"] <= 0 or any(type(state[key]) is not str or not state[key] for key in ("token", "root", "config", "script", "python", "status", "created_at")):
+    # pid 0 is only the staged record of a launch that never produced a process.
+    launch_only = state["pid"] == 0 and state["status"] in ("launching", "stopped")
+    if type(state["pid"]) is not int or (state["pid"] <= 0 and not launch_only) or any(type(state[key]) is not str or not state[key] for key in ("token", "root", "config", "script", "python", "status", "created_at")):
         raise RuntimeErrorSafe("control state has invalid process identity")
     return state
 
@@ -171,7 +165,8 @@ def inspect_status(root: Path = COMPONENT_ROOT, *, command_reader=_process_comma
             poll = __import__("shadow_runtime").load_config(Path(state["config"]), root)["poll_seconds"]
             from reviewer import settings
             timeout = settings(root).get("timeout_seconds", 0)
-            if age > max(10, poll * 2 + 5, timeout + 5):
+            # A reviewed event makes two model requests between heartbeats.
+            if age > max(10, poll * 2 + 5, timeout * 2 + 5):
                 result.update(state="error", reason="observer identity verified but heartbeat is stale")
         except Exception:
             result.update(state="error", reason="observer identity verified but heartbeat could not be assessed")
@@ -228,11 +223,16 @@ def _start(root: Path, config_path: Path | None, *, wait_seconds: float) -> dict
     child_env = os.environ.copy()
     if root != COMPONENT_ROOT.resolve():
         child_env["DAXXER_SHADOW_TEST_ROOT"] = str(root)
-    with log_path.open("ab", buffering=0) as log:
-        process = subprocess.Popen(
-            command, stdin=subprocess.DEVNULL, stdout=log, stderr=log,
-            cwd=str(root), creationflags=creationflags, close_fds=True, env=child_env, **popen_kwargs,
-        )
+    try:
+        with log_path.open("ab", buffering=0) as log:
+            process = subprocess.Popen(
+                command, stdin=subprocess.DEVNULL, stdout=log, stderr=log,
+                cwd=str(root), creationflags=creationflags, close_fds=True, env=child_env, **popen_kwargs,
+            )
+    except BaseException:
+        # No process exists; do not leave the staged record claiming a launch.
+        _atomic_json(state_path, {**staged, "status": "stopped", "stopped_at": utc_now(), "stop_reason": "launch_failed"})
+        raise
     state = {
         "schema_version": "0.2", "pid": process.pid, "token": token,
         "root": str(root), "config": str(config_path), "script": str(SCRIPT),
