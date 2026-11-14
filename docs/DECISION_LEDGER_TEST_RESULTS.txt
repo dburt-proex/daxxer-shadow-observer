@@ -1,0 +1,12 @@
+Decision Ledger v0.1 — local verification receipt
+Date: 2026-11-14
+Platform: Windows; Python 3.11.15
+Full suite: 103 tests; 101 passed, 1 environment error, 1 environment skip; 49.192 seconds.
+New collector/adapter suite: 22 passed, 1 loopback socket permission skip.
+Existing process-control test error: OS process identity unavailable.
+Loopback HTTP skip: WinError 10013, socket access denied.
+Synthetic four-stage demo: passed.
+git diff --check: passed.
+Production dependency install: unverified; PyPI DNS unavailable.
+Hosted recovery and long-duration operation: not tested.
+Raw machine-specific logs and runtime records excluded from GitHub.
