@@ -1,0 +1,28 @@
+# Proposal only. Importing this Blueprint creates a paid service: owner approval required.
+services:
+  - type: web
+    name: daxxer-decision-ledger
+    runtime: python
+    plan: starter
+    numInstances: 1
+    autoDeployTrigger: off
+    buildCommand: pip install --require-hashes --only-binary=:all: -r requirements-collector.txt
+    startCommand: python -B scripts/decision_collector.py serve
+    healthCheckPath: /healthz
+    disk:
+      name: ledger-data
+      mountPath: /var/data
+      sizeGB: 1
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.13.9
+      - key: LEDGER_BIND
+        value: 0.0.0.0
+      - key: LEDGER_DB
+        value: /var/data/decision-ledger.sqlite3
+      - key: LEDGER_STALE_SECONDS
+        value: 180
+      - key: LEDGER_SOURCE_DIGESTS
+        sync: false
+      - key: LEDGER_READER_DIGEST
+        sync: false

@@ -1,0 +1,22 @@
+# Alternative VM proposal only; do not install without deployment approval.
+[Unit]
+Description=DAXXER Decision Ledger
+After=network.target
+
+[Service]
+User=daxxer-ledger
+Group=daxxer-ledger
+WorkingDirectory=/opt/daxxer-shadow-observer
+EnvironmentFile=/etc/daxxer-ledger.env
+ExecStart=/opt/daxxer-shadow-observer/.venv/bin/python -B scripts/decision_collector.py serve
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/daxxer-ledger
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

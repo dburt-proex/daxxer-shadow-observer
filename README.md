@@ -5,6 +5,13 @@ not. It observes explicitly configured folders, ranks safe changes with VIL,
 and records incomplete experience episodes automatically. It never executes
 recommendations. Python 3.11+; standard library only.
 
+## Decision collector proposal
+
+The opt-in [Persistent Decision Ledger v0.1](docs/DECISION_LEDGER.md) adds a
+separate authenticated collector and one reviewed-episode adapter. See
+[executed verification and deployment limits](docs/DECISION_LEDGER_VERIFICATION.md).
+It is prepared for review, not deployed; existing observer commands are unchanged.
+
 ## Start here
 
 From PowerShell in this repository:
